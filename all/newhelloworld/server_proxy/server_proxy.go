@@ -1,7 +1,7 @@
 package serverproxy
 
 import (
-	"good/newhelloworld/handle"
+	"all/newhelloworld/handle"
 	"net/rpc"
 )
 

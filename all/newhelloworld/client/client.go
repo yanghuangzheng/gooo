@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	clientproxy "good/newhelloworld/client_proxy"
+	clientproxy "all/newhelloworld/client_proxy"
 )
 
 func main() {

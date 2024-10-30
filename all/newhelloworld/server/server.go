@@ -5,8 +5,8 @@ import (
 	"net"
 	"net/rpc"
 
-	"good/newhelloworld/handle"
-	serverproxy "good/newhelloworld/server_proxy"
+	"all/newhelloworld/handle"
+	serverproxy "all/newhelloworld/server_proxy"
 )
 
 type HelloServer struct{}
