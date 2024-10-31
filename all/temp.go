@@ -6,3 +6,5 @@ protoc -I . helloworld.proto --go_out=plugins=grpc:.
 protoc -I . helloworld.proto --go_out=. --go-grpc_out=.
 "google.golang.org/grpc/metadata"
 go-grpc-middleware
+"google.golang.org/grpc/status"
+google.golang.org/grpc/codes
