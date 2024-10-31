@@ -4,171 +4,326 @@ package all
 protoc -I . goods.proto --go_out=plugins=grpc:.
 protoc -I . helloworld.proto --go_out=plugins=grpc:.
 protoc -I . helloworld.proto --go_out=. --go-grpc_out=.
-protobuf的原理
+protoc -I . --go_out=. --go-grpc_out=. --validate_out="lang=go:." form.proto
+"google.golang.org/grpc/metadata"
+go-grpc-middleware
+"google.golang.org/grpc/status"
+google.golang.org/grpc/codes
+/////////////////////////////////////////////
+Validate
+/////////////////////////////////////////////
+form.proto
+syntax="proto3";
 
-//stream_grpc_test
-////////////////////////////////////////////////////
+import "validate.proto";
+option go_package = ".;proto";
+
+service Greeter{
+    rpc SayHello(Person) returns(Person);
+}
+//好比文档 表单验证 
+//验证器
+message Person{
+    uint64 id=1 [(validate.rules).uint64.gt   =999];
+    string email =2 [(validate.rules).string.email   =true];
+    string mobile = 3 [(validate.rules).string = {
+        pattern:   "^1[3456789]\\d{9}$",
+        max_bytes: 256,
+      }];
+}
+////////////////////////////////////////////////
+service
+///////////////////////////////////////////////
+package main
+import(
+	"context"
+	"net"
+	//"fmt"
+
+	"all/Validator/proto"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+type Server struct{
+	//proto.UnimplementedGreeterServer
+	//mustEmbedUnimplementedGreeterServer(),
+}
+//ctx主要解决协程超时
+func (s *Server) SayHello(ctx context.Context,in*proto.Person) (*proto.Person, error) {
+    return &proto.Person{
+       Id:32,
+	   Mobile:"1888888888888888888",
+    }, nil
+}
+type Validator interface{
+	Validate() error
+}
+func main(){
+	/*p:=new(proto.Person)
+	err :=p.Validate()
+     if err!= nil{
+		 panic(err)
+	 }*/
+	inter := func(ctx context.Context,req interface{},info *grpc.UnaryServerInfo,handler grpc.UnaryHandler)(resp interface{},err error){
+		if r,ok:=req.(Validator);ok{//注意上文的接口
+			if err:=r.Validate();err!=nil{
+				return nil,status.Error(codes.InvalidArgument,err.Error())
+			}
+		}
+          return handler(ctx,req)
+	}
+	//生成拦截器
+	opt:=grpc.UnaryInterceptor(inter)
+	g:=grpc.NewServer(opt)
+	proto.RegisterGreeterServer(g,&Server{})
+	lis,err:=net.Listen("tcp","0.0.0.0:8080")
+	if err!=nil {
+		panic("failed to listen:"+err.Error())
+	}
+	err=g.Serve(lis)
+}
+/////////////////////////////////////////////////////////////
 client
-/////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////
 package main
 import(
 	"context"
 	"fmt"
-	"sync"
-	"time"
+	//"time"
 
-	"all/stream_grpc_test/proto"
+	"all/Validator/proto"
 
 	"google.golang.org/grpc"
+	//"google.golang.org/grpc/metadata"
 )
+type custom struct{
+}
+func(c custom)GetRequestMetadata(ctx context.Context,uri ...string)(map[string]string,error) {
+	return map[string]string{
+		"appid":"100",
+		"appkey":"keey",
+	},nil
+}
+func (c custom)RequireTransportSecurity()bool{
+	return false
+}
 func main(){
-	 conn,err:=grpc.Dial("127.0.0.1:50052",grpc.WithInsecure())
+	/*inter := func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+                   start := time.Now()
+				   //逻辑
+				  md :=metadata.New(map[string]string{
+					"appid":"100",
+					"appkey":"keey",
+				})
+				//ctxx:=metadata.NewOutgoingContext(context.Background(),md)
+				   err:=invoker(ctxx,method,req,reply,cc,opts...)
+				   fmt.Println("耗时：%s\n",time.Since(start))
+				   return err
+   }*/
+    opt:=grpc.WithPerRPCCredentials(custom{})
+	//opt:=grpc.WithUnaryInterceptor(inter)
+	//var opts[]grpc.DialOption
+	//opts=append(opts,grpc.WithInsecure())
+	//opts=append(grpc.WithUnaryInterceptor(inter)
+	//conn,err:=grpc.Dial("127.0.0.1:8080",opts...)
+	 conn,err:=grpc.Dial("127.0.0.1:8080",grpc.WithInsecure(),opt)
 	 if err!=nil{
 		 panic(err)
 	 }
 	 defer conn.Close()
+	 
 	 c:=proto.NewGreeterClient(conn)
-
-	 //服务端流模式
-	 res,err:=c.GetStream(context.Background(),&proto.StreamReqData{Data:"mooc"})
+	 r,err:=c.SayHello(context.Background(),&proto.Person{
+		Id:1000,
+		Email:"bobby@imocc.com",
+	    Mobile:"18888888888",
+	})
 	 if err!=nil{
 		panic(err)
 	}
-	for{
-		a,err:=res.Recv()
-		if err!=nil{
-			break
-			//panic(err)
-		}
-		fmt.Println(a)
-	}
-
-	//客户端流模式
-	puts,_:=c.PostStream(context.Background())
-	i :=0
-	for {
-		i++
-		puts.Send(&proto.StreamReqData{
-			Data:fmt.Sprintf("mooc%d",i),
-		})
-		time.Sleep(time.Second)
-		if i>10{
-			break
-		}
-	}
-
-	//双端流模式
-	allstr,_:=c.AllStream(context.Background())
-		wg:=sync.WaitGroup{}
-		wg.Add(2)
-		go func(){
-			defer wg.Done()
-			for{
-				data,_:=allstr.Recv()
-				fmt.Println("收到客户端消息"+data.Data)
-			}
-		}()
-		go func(){
-			defer wg.Done()
-			for{
-				allstr.Send(&proto.StreamReqData{Data:"我是客户端"})
-				time.Sleep(time.Second)
-			}
-		}()
-		wg.Wait()
-
+	fmt.Println(r.Mobile)
 }
-/////////////////////////////////////////////////////////
-stream.proto
-/////////////////////////////////////////////////////////
+
+
+
+////////////////////////////////////////////////////////////////
+interpretor
+///////////////////////////////////////////////////////////////
+service
+//////////////////////////////////////////////////////////////////
+package main
+import(
+	"context"
+	"net"
+	"fmt"
+
+	"all/grpc_test/proto"
+
+	"google.golang.org/grpc"
+)
+type Server struct{
+	//proto.UnimplementedGreeterServer
+}
+//ctx主要解决协程超时
+func (s *Server) SayHello(ctx context.Context,in*proto.HelloRequest) (*proto.HelloReply, error) {
+    return &proto.HelloReply{
+        Message :"hello hhh" + in.Name,
+    }, nil
+}
+func main(){
+	inter := func(ctx context.Context,req interface{},info *grpc.UnaryServerInfo,handler grpc.UnaryHandler)(resp interface{},err error){
+	     fmt.Println("接收到了一个新请求")
+		 res,err:=handler(ctx,req)
+		 fmt.Println("请求已经完成")
+		 return res,err
+         // return handler(ctx,req)
+	}
+	//生成拦截器
+	opt:=grpc.UnaryInterceptor(inter)//grpc生成
+	g:=grpc.NewServer(opt)//配置拦截器可以传入多个opt
+	//var serverGreeter = &Server{}
+	proto.RegisterGreeterServer(g,&Server{})
+	lis,err:=net.Listen("tcp","0.0.0.0:8080")
+	if err!=nil {
+		panic("failed to listen:"+err.Error())
+	}
+	err=g.Serve(lis)
+}
+/////////////////////////////////////////////////////////////////////////////////
+client
+/////////////////////////////////////////////////////////////////////////////
+package main
+import(
+	"context"
+	"fmt"
+	"time"
+
+	"all/grpc_test/proto"
+
+	"google.golang.org/grpc"
+)
+func main(){
+	inter := func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+                   start := time.Now()
+				   //逻辑
+				   err:=invoker(ctx,method,req,reply,cc,opts...)
+				   fmt.Println("耗时：%s\n",time.Since(start))
+				   return err
+   }
+	opt:=grpc.WithUnaryInterceptor(inter)
+	//var opts[]grpc.DialOption
+	//opts=append(opts,grpc.WithInsecure())
+	//opts=append(grpc.WithUnaryInterceptor(inter)
+	//conn,err:=grpc.Dial("127.0.0.1:8080",opts...)
+	 conn,err:=grpc.Dial("127.0.0.1:8080",grpc.WithInsecure(),opt)
+	 if err!=nil{
+		 panic(err)
+	 }
+	 defer conn.Close()
+	 
+	 c:=proto.NewGreeterClient(conn)
+	 r,err:=c.SayHello(context.Background(),&proto.HelloRequest{Name:"bobby"})
+	 if err!=nil{
+		panic(err)
+	}
+	fmt.Println(r.Message)
+}
+////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+metadate
+/////////////////////////
+service
+///////////////////////////////
+package main
+import(
+	"context"
+	"net"
+	"fmt"
+
+	"all/grpc_test/proto"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
+)
+type Server struct{
+	//proto.UnimplementedGreeterServer
+}
+//ctx主要解决协程超时
+func (s *Server) SayHello(ctx context.Context,in*proto.HelloRequest) (*proto.HelloReply, error) {
+	md,ok:=metadata.FromIncomingContext(ctx)
+	if ok{
+		fmt.Println("get data err")
+	}
+	if name,ok:=md["name"];ok{
+		fmt.Println(name)
+		for i,e:=range name{
+			fmt.Println(i,e)
+		}
+	}
+        for key,val:=range md{
+			fmt.Println(key,val)}
+    return &proto.HelloReply{
+        Message :"hello hhh" + in.Name,
+    }, nil
+}
+func main(){
+	g:=grpc.NewServer()
+	//var serverGreeter = &Server{}
+	proto.RegisterGreeterServer(g,&Server{})
+	lis,err:=net.Listen("tcp","0.0.0.0:8080")
+	if err!=nil {
+		panic("failed to listen:"+err.Error())
+	}
+	err=g.Serve(lis)
+}
+//////////////////////////////////////////////////////////////////////////////////
+client
+/////////////////////////////////////////////////////////////////
+package main
+import(
+	"context"
+	"fmt"
+	//"time"
+
+	"all/grpc_test/proto"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
+)
+func main(){
+	 conn,err:=grpc.Dial("127.0.0.1:8080",grpc.WithInsecure())
+	 if err!=nil{
+		 panic(err)
+	 }
+	 defer conn.Close()
+	 
+	 c:=proto.NewGreeterClient(conn)
+	// md :=metadata.Pairs("timestamp",time.Now().Format(timestampFormat))
+	 md :=metadata.New(map[string]string{
+		 "name":"bobby",
+		 "pasworld":"imooc",
+	 })
+	 ctx:=metadata.NewOutgoingContext(context.Background(),md)
+	 r,err:=c.SayHello(/*context.Background()*/ctx,&proto.HelloRequest{Name:"bobby"})
+	 if err!=nil{
+		panic(err)
+	}
+	fmt.Println(r.Message)
+}
+、、、、、、、、、、、、、、、、、、、、、、、、、、、、、、、、、、、、、、、、、、、、、、、
 syntax="proto3";
 option go_package = ".;proto";
 service Greeter{
-    rpc GetStream(StreamReqData) returns(stream StreamResData);//服务端流模式
-    rpc PostStream(stream StreamReqData) returns(StreamResData);//客户端流模式
-    rpc AllStream(stream StreamReqData) returns(stream StreamResData);//双向模式
+    rpc SayHello(HelloRequest) returns(HelloReply);
 }
-message StreamReqData{
-    string data =1;
+message HelloRequest{
+    string Name =1;
 }
-message StreamResData{
-    string data =1;
+message HelloReply{
+    string message=1;
 }
-///////////////////////////////////////////////////////
-server
-///////////////////////////////////////////////////////
-package main
-	import(
-		"fmt"
-		"net"
-		"time"
-		"sync"
-	
-		"all/stream_grpc_test/proto"
-	
-		"google.golang.org/grpc"
-	)
-const PORT="50052"
-type server struct{
 
-}
-//服务端流模式没有context
-func(s *server)GetStream(in *proto.StreamReqData,res proto.Greeter_GetStreamServer)error{
-	i := 0
-	for {
-		i++
-		if err := res.Send(&proto.StreamResData{
-			Data: fmt.Sprintf("%v", time.Now().Unix()),
-		}); err != nil {
-			return err
-		}
-		time.Sleep(time.Second)
-		if i > 10 {
-			break
-		}
-	}
-	return nil
-  }
-func(s *server)PostStream(stream proto.Greeter_PostStreamServer) error{
-	for{
-	  if a,err:=stream.Recv();err!=nil{
-		  fmt.Println(err)
-		  break
-	  }else{
-		  fmt.Println(a.Data)
-	  }
-	}
-return nil
-}
-func(s *server) AllStream(stream proto.Greeter_AllStreamServer) error{
-	   wg:=sync.WaitGroup{}
-	   wg.Add(2)
-	   go func(){
-		defer wg.Done()
-		   for{
-			   data,_:=stream.Recv()
-			   fmt.Println("收到客户端消息"+data.Data)
-		   }
-	   }()
-	   go func(){
-		   defer wg.Done()
-		   for{
-			   stream.Send(&proto.StreamResData{Data:"我是服务器"})
-			   time.Sleep(time.Second)
-		   }
-	   }()
-	   wg.Wait()
-	return nil
-}
-func main(){
-    lis, err := net.Listen("tcp", ":"+PORT)
-	if err!=nil{
-		panic("ccc")
-	}
-	s:=grpc.NewServer()
-	proto.RegisterGreeterServer(s,&server{})
-	if err := s.Serve(lis); err != nil {
-		panic("failed to serve: " + err.Error())
-	}
-}
-	///////////////////////////////////////////////////////////////////////
