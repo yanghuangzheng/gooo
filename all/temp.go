@@ -45,3 +45,7 @@ DATA_LOSS (15)
 UNAUTHENTICATED (16)
 请求未通过身份验证。
 "context" 的理解与使用
+/////////////////////////////////////////////////////////////
+orm //屏蔽底层sql语句 将一张表映射成一个类 表中的列映射成类中的一个类对于go中 列可以映射成struct中的类型 但是数据库中的列要具备很好的描述性，但是struct有tag。
+github.com/go-gorm/gorm
+github.com/facebook/ent
