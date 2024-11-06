@@ -59,3 +59,4 @@ go get -u gorm.io/driver/mysql
 https://gorm.io/zh_CN/docs/logger.html
 ///////////////////////////////////////////////
 将proto反解回来
+func init()先配置
