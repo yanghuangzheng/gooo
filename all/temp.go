@@ -49,6 +49,10 @@ UNAUTHENTICATED (16)
 orm //屏蔽底层sql语句 将一张表映射成一个类 表中的列映射成类中的一个类对于go中 列可以映射成struct中的类型 但是数据库中的列要具备很好的描述性，但是struct有tag。
 对于个人而言不应该去纠结一个选择哪一个orm框架因为orm迁移成本低
 sql语言远比orm重要 一定要注意sql 虽然屏蔽但是很重要
+http
+sql
+docker
+k8s
 github.com/go-gorm/gorm
 github.com/facebook/ent
 github.com/facebook/sqlx
