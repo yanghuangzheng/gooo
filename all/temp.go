@@ -54,6 +54,8 @@ sql
 docker
 k8s
 跨域问题
+CORS的工作原理
+跨域请求的场景
 /////////////////////////////////////////////////////////////
 github.com/go-gorm/gorm
 github.com/facebook/ent
