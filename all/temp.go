@@ -53,6 +53,8 @@ http
 sql
 docker
 k8s
+跨域问题
+/////////////////////////////////////////////////////////////
 github.com/go-gorm/gorm
 github.com/facebook/ent
 github.com/facebook/sqlx
