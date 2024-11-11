@@ -56,6 +56,7 @@ k8s
 跨域问题
 CORS的工作原理
 跨域请求的场景
+yuque.com/bobby-zpcyu/ggq3y6/ipym8u
 /////////////////////////////////////////////////////////////
 github.com/go-gorm/gorm
 github.com/facebook/ent
