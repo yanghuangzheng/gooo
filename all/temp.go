@@ -68,4 +68,13 @@ go get -u gorm.io/driver/mysql
 https://gorm.io/zh_CN/docs/logger.html
 ///////////////////////////////////////////////
 将proto反解回来
-func init()先配置
+func init()先配置、
+//////////////////////////////////////
+zap
+Info：记录信息级别的日志。
+Debug：记录调试级别的日志。
+Warn：记录警告级别的日志。
+Error：记录错误级别的日志。
+DPanic：记录严重错误级别的日志，并在开发环境中触发 panic。
+Panic：记录错误级别的日志，并触发 panic。
+Fatal：记录致命错误级别的日志，并终止程序。
