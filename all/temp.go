@@ -80,3 +80,30 @@ Panic：记录错误级别的日志，并触发 panic。
 Fatal：记录致命错误级别的日志，并终止程序。
 
 商品  订单  用户 gorm sql一定要多学习
+
+servec层 从sql里拿数据用gorm表单 然后写到proto定义的结构里 传给gin
+同时写入sql也是用gorm 
+同时前端到gin时用form json binding 表单限定
+前到gin bool要设置成指针
+返回的数据格式
+mysql锁
+redis锁
+zook锁
+grpc的长链接式编程 股票那种
+type GoodsCategoryBrand struct {
+	BaseModel
+	ParentCategoryID int32      `gorm:"type:int;index_category_brand,unique;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"parent_category_id"`
+	Category         Category   `gorm:"foreignKey:ParentCategoryID;references:ID" json:"-"`
+	BrandsID         int32      `gorm:"type:int;index_category_brand,unique;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"brands_id"`
+	Brands           Brands     `gorm:"foreignKey:BrandsID;references:ID" json:"-"`
+}
+result := global.DB.Preload("Brands").Where(&model.GoodsCategoryBrand{ParentCategoryID:req.Id}).Find(&categoryBrands)
+type GoodsCategoryBrand struct{
+	BaseModel
+	ParentCategoryID int32      `gorm:"type:int;index_category_brand,unique"`
+	Category         Category  
+
+	BrandsID         int32      `gorm:"type:int;index_category_brand,unique"`
+	Brands           Brands    
+}
+gorm里定义的数据格式什么时候用默认什么时候用数据库的
