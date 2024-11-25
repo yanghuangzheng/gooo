@@ -107,3 +107,30 @@ type GoodsCategoryBrand struct{
 	Brands           Brands    
 }
 gorm里定义的数据格式什么时候用默认什么时候用数据库的
+
+syntax = "proto3";
+
+package example;
+
+service StreamService {
+  rpc SendMultipleMessages (stream MessageRequest) returns (MessageResponse) {}
+  rpc ProcessMultipleMessages (stream SingleMessageRequest) returns (stream SingleMessageResponse) {}
+}
+
+message MessageRequest {
+  string message = 1;
+}
+
+message MessageResponse {
+  string result = 1;
+}
+
+message SingleMessageRequest {
+  string message = 1;
+  int32 id = 2;
+}
+
+message SingleMessageResponse {
+  string processed_message = 1;
+  bool success = 2;
+}
