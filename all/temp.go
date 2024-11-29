@@ -303,4 +303,13 @@ get user/_search
 consumer.ConsumeResult 是一个枚举类型，用于表示消息消费的结果。
 consumer.ConsumeSuccess 表示消息成功被消费。
 consumer.ConsumeRetryLater 表示消息消费失败，需要稍后重试。
-consumer.ConsumeRollBack 表示消息消费失败，需要回滚（通常用于事务消息）。	 
+consumer.ConsumeRollBack 表示消息消费失败，需要回滚（通常用于事务消息）。
+primitive.CommitMessageState:
+含义: 表示本地事务已经成功提交。
+行为: RocketMQ会将该消息标记为已提交，并将其发送给消费者进行处理。
+primitive.RollbackMessageState:
+含义: 表示本地事务已经回滚。
+行为: RocketMQ会丢弃该消息，不再将其发送给消费者。
+primitive.UnknownMessageState:
+含义: 表示本地事务的状态暂时未知，需要RocketMQ进行回查（Check）来确定最终状态。
+行为: RocketMQ会在一段时间后通过调用本地事务的检查方法来确定消息的最终状态。
