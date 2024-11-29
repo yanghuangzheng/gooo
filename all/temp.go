@@ -300,4 +300,7 @@ get user/_search
     }
  }
 }
-	 
+consumer.ConsumeResult 是一个枚举类型，用于表示消息消费的结果。
+consumer.ConsumeSuccess 表示消息成功被消费。
+consumer.ConsumeRetryLater 表示消息消费失败，需要稍后重试。
+consumer.ConsumeRollBack 表示消息消费失败，需要回滚（通常用于事务消息）。	 
