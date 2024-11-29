@@ -289,5 +289,15 @@ get user/_search
     }
   }
 }
-
-	
+///////////////////////////////////////////////////////////////////////////
+mapping 定义索引中的字段的名称定义字段的数据类型
+主要是keyword与text的区别
+get user/_search
+{
+ "query":{
+    "match":{
+     "address.Keyword":"671 Bristol Street"
+    }
+ }
+}
+	 
