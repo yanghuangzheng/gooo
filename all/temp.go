@@ -313,3 +313,43 @@ primitive.RollbackMessageState:
 primitive.UnknownMessageState:
 含义: 表示本地事务的状态暂时未知，需要RocketMQ进行回查（Check）来确定最终状态。
 行为: RocketMQ会在一段时间后通过调用本地事务的检查方法来确定消息的最终状态。
+ // 创建一个新的消费者实例
+    c, err := rocketmq.NewPushConsumer(
+        consumer.WithNameServer([]string{"localhost:9876"}),
+        consumer.WithGroupName("your_consumer_group"),
+    )
+    if err != nil {
+        panic(err)
+    }
+
+    // 创建 OrderListener 实例
+    orderListener := &OrderListener{}
+
+    // 注册事务监听器
+    err = c.StartTransactionListener(orderListener)
+    if err != nil {
+        panic(err)
+    }
+
+    // 订阅主题
+    err = c.Subscribe("order_topic", consumer.MessageSelector{}, func(ctx context.Context, msgs ...*primitive.MessageExt) (consumer.ConsumeResult, error) {
+        // 处理消息的逻辑
+        for _, msg := range msgs {
+            // 处理每条消息
+            fmt.Printf("Received message: %s\n", string(msg.Body))
+        }
+        return consumer.ConsumeSuccess, nil
+    })
+    if err != nil {
+        panic(err)
+    }
+
+    // 启动消费者
+    err = c.Start()
+    if err != nil {
+        panic(err)
+    }
+
+    // 等待程序退出
+    select {}
+}
