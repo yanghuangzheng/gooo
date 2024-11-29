@@ -353,3 +353,19 @@ primitive.UnknownMessageState:
     // 等待程序退出
     select {}
 }
+普通消息（Normal Message）：
+普通消息是最常见的消息类型，不涉及任何事务。
+使用 SendMessage 方法发送。
+顺序消息（Ordered Message）：
+顺序消息保证消息按照发送的顺序被消费。
+可以分为全局顺序消息和局部顺序消息。
+使用 SendMessage 方法发送，并设置相应的顺序属性。
+延迟消息（Delayed Message）：
+延迟消息允许消息在指定的延迟时间后才被消费。
+使用 SendMessage 方法发送，并设置延迟级别。
+批量消息（Batch Message）：
+批量消息允许一次性发送多条消息。
+使用 SendMessage 方法发送，并传入多个消息体。
+定时消息（Scheduled Message）：
+定时消息允许消息在指定的时间点被消费。
+使用 SendMessage 方法发送，并设置定时属性。
