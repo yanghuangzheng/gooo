@@ -369,3 +369,11 @@ primitive.UnknownMessageState:
 定时消息（Scheduled Message）：
 定时消息允许消息在指定的时间点被消费。
 使用 SendMessage 方法发送，并设置定时属性。
+type StateChangeListener interface {
+        // 熔断器切换到 Closed 状态时候会调用改函数, prev代表切换前的状态，rule表示当前熔断器对应的规则
+	OnTransformToClosed(prev State, rule Rule)
+        // 熔断器切换到 Open 状态时候会调用改函数, prev代表切换前的状态，rule表示当前熔断器对应的规则， snapshot表示触发熔断的值
+	OnTransformToOpen(prev State, rule Rule, snapshot interface{})
+        // 熔断器切换到 HalfOpen 状态时候会调用改函数, prev代表切换前的状态，rule表示当前熔断器对应的规则
+	OnTransformToHalfOpen(prev State, rule Rule)
+}
