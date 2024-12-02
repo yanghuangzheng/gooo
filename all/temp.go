@@ -382,3 +382,8 @@ MinRequestAmount: 静默数量，如果当前统计周期内对资源的访问�
 StatIntervalMs: 统计的时间窗口长度（单位为 ms）。
 MaxAllowedRtMs: 仅对慢调用熔断策略生效，MaxAllowedRtMs 是判断请求是否是慢调用的临界值，也就是如果请求的response time小于或等于MaxAllowedRtMs，那么就不是慢调用；如果response time大于MaxAllowedRtMs，那么当前请求就属于慢调用。
 Threshold: 对于慢调用熔断策略, Threshold表示是慢调用比例的阈值(小数表示，比如0.1表示10%)，也就是如果当前资源的慢调用比例如果高于Threshold，那么熔断器就会断开；否则保持闭合状态。 对于错误比例策略，Threshold表示的是错误比例的阈值(小数表示，比如0.1表示10%)。对于错误数策略，Threshold是错误计数的阈值。
+	分布式上下文传递
+分布式事务监控
+根本原因分析
+服务依赖分析
+性能、延迟优化
