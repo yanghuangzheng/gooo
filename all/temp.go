@@ -388,3 +388,54 @@ Threshold: 对于慢调用熔断策略, Threshold表示是慢调用比例的阈�
 服务依赖分析
 性能、延迟优化
 可以用中间件的形式来使用熔断机制
+
+
+	<settings>
+    <mirrors>
+        <mirror>
+            <id>public</id>
+            <name>maven-public</name>
+            <url>http://nexus.jp.sbibits.com/repository/maven-public/</url>
+            <mirrorOf>*</mirrorOf>
+        </mirror>
+    </mirrors>
+    <profiles>
+        <profile>
+            <id>allow-snapshots</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <repositories>
+                <repository>
+                    <id>maven-snapshots</id>
+                    <url>http://nexus.jp.sbibits.com/repository/maven-snapshots/
+                    </url>
+                    <releases>
+                        <enabled>false</enabled>
+                    </releases>
+                    <snapshots>
+                        <enabled>true</enabled>
+                    </snapshots>
+                </repository>
+            </repositories>
+        </profile>
+    </profiles>
+    <servers>
+        <server>
+            <id>nexus.jp.sbibits.com</id>
+            <username>gitlab</username>
+            <password>gitlab123</password>
+        </server>
+    </servers>
+    <proxies>
+        <proxy>
+            <id>my-proxy</id>
+            <active>true</active>
+            <protocol>https</protocol>
+            <host>10.136.0.60</host>
+            <port>8080</port>
+            <nonProxyHosts>http://nexus.jp.sbibits.com/*</nonProxyHosts>
+        </proxy>
+    </proxies>
+
+</settings>
