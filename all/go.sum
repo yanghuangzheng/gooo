@@ -119,3 +119,622 @@ gorm.io/gorm v1.25.12 h1:I0u8i2hWQItBq1WfE0o2+WuL9+8L21K9e2HHSTE/0f8=
 gorm.io/gorm v1.25.12/go.mod h1:xh7N7RHfYlNc5EmcI/El95gXusucDrQnHXe0+CgWcLQ=
 nullprogram.com/x/optparse v1.0.0/go.mod h1:KdyPE+Igbe0jQUrVfMqDMeJQIJZEuyV7pjYmp6pbG50=
 rsc.io/pdf v0.1.1/go.mod h1:n8OzWcQ6Sp37PL01nO98y4iUCRdTGarVfzxY20ICaU4=
+
+use regex::RegexSet;
+use std::sync::Arc;
+
+use super::util::{random_str, ClientManager, KEY_WORDS, NOT_FOUND};
+use ctlh_aamapp::data::*;
+use ctlh_aamapp_api::interface::{AamappClient, AamappServerHandler, Result};
+use ctlh_aamapp_check::{aamapp_api::*, prelude::*};
+use ctlh_err_msg::*;
+use ctlh_trade_common::{
+    brpc_std,
+    data::{Error as DataError, Header},
+};
+use std::fmt::Write;
+use tracing::*;
+
+pub struct AamappDistributor {
+    pub regex: RegexSet,
+    ///buten client list, every buten has a client
+    pub buten_clients: Vec<(Arc<AamappClient>, String)>,
+    ///group client list, every group has a client, for `distribute all`
+    pub group_clients: Vec<Arc<AamappClient>>,
+}
+
+pub struct AamappDistributorHandler {
+    pub distributor: Arc<AamappDistributor>,
+}
+
+impl AamappDistributorHandler {
+    pub fn new(
+        regex: RegexSet,
+        buten_clients: Vec<(Arc<AamappClient>, String)>,
+        group_clients: Vec<Arc<AamappClient>>,
+    ) -> AamappDistributorHandler {
+        AamappDistributorHandler {
+            distributor: Arc::new(AamappDistributor {
+                regex,
+                buten_clients,
+                group_clients,
+            }),
+        }
+    }
+}
+
+impl ClientManager<AamappClient> for AamappDistributorHandler {}
+
+#[async_trait::async_trait]
+impl AamappServerHandler for AamappDistributorHandler {
+    async fn ping(&self) -> Result<()> {
+        let start = std::time::Instant::now();
+        let (result, addr) = match Self::random_get_client(&self.distributor.buten_clients) {
+            Some((cli, addr)) => (cli.ping().await, addr),
+            None => (Err(anyhow::anyhow!("find client failed")), NOT_FOUND.into()),
+        };
+
+        metrics::histogram!("distributor.access_log", start.elapsed(),
+                        "service" => "aamapp",
+                        "api" => "ping",
+                        "result" => if result.is_ok() { "ok" } else { "err" },
+                        "addr" => addr);
+
+        result
+    }
+
+    async fn get_fop_mediate_list(
+        &self,
+        header: Header,
+        mediate_code: Option<String>,
+        mediate_name: Option<String>,
+        status_flg: Option<ctlh_common::data::OffOn>,
+    ) -> Result<(
+        ResultType,
+        Option<Vec<ctlh_aamapp::data::MediateItem>>,
+        Option<Vec<DataError>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_fop_mediate_list, check_get_fop_mediate_list, header, mediate_code, mediate_name, status_flg; None;)
+    }
+
+    async fn get_mediate_customer_list(
+        &self,
+        header: Header,
+        mediate_code: String,
+    ) -> Result<(
+        ResultType,
+        Option<Vec<ctlh_aamapp::data::CustomerItem>>,
+        Option<Vec<DataError>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_mediate_customer_list, check_get_mediate_customer_list, header, mediate_code; None;)
+    }
+
+    async fn get_account_info_list(
+        &self,
+        header: Header,
+        margincall_flg: Option<ctlh_common::data::OffOn>,
+        refer_time_cls: ctlh_common::data::ReferTimeCls,
+        all_search_flg: ctlh_common::data::OffOn,
+    ) -> Result<(
+        ResultType,
+        Option<Vec<ctlh_aamapp::data::AccountInfoItem>>,
+        Option<Vec<DataError>>,
+    )> {
+        let start = std::time::Instant::now();
+        let ip = header.remote_ip.clone();
+        let id = random_str();
+
+        let (res, addr) = request!(Self, self, "aamapp", get_account_info_list, check_get_account_info_list, header, ip, id, margincall_flg, refer_time_cls, all_search_flg; None;);
+        let res1 = match res {
+            Ok(ref v) => {
+                let mut v1 = v.clone();
+                v1.1 = v1.1.map(|mut v| {
+                    v.iter_mut().for_each(|x| {
+                        x.customer_name = "***".into();
+                    });
+                    v
+                });
+                Ok(v1)
+            }
+            Err(ref e) => Err(e),
+        };
+        response!("aamapp", get_account_info_list, ip, res1, start, id, addr);
+        res
+    }
+
+    async fn get_commission(
+        &self,
+        header: Header,
+        commission_code: u16,
+    ) -> Result<(
+        ResultType,
+        Option<Vec<ctlh_aamapp::data::CommissionItem>>,
+        Option<Vec<DataError>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_commission, check_get_commission, header, commission_code; None;)
+    }
+
+    async fn get_fop_customer_commission(
+        &self,
+        header: Header,
+    ) -> Result<(
+        ResultType,
+        Option<Vec<ctlh_aamapp::data::NowCommissionInfo>>,
+        Option<Vec<ctlh_aamapp::data::NextCommissionInfo>>,
+        Option<Vec<DataError>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_fop_customer_commission, check_get_fop_customer_commission, header, ; None, None;)
+    }
+
+    async fn get_product_commission_list(
+        &self,
+        header: ctlh_aam::data::Header,
+        product_detail_id: u8,
+    ) -> Result<(
+        ResultType,
+        Option<Vec<ctlh_aamapp::data::CommissionSummuryInfo>>,
+        Option<Vec<DataError>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_product_commission_list, check_get_product_commission_list, header, product_detail_id; None;)
+    }
+
+    async fn get_fop_system_position_limit_list(
+        &self,
+        header: ctlh_trade_common::data::Header,
+    ) -> Result<(
+        ResultType,
+        Option<Vec<ctlh_aamapp::data::SystemPositionLimitItem>>,
+        Option<Vec<DataError>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_fop_system_position_limit_list, check_get_fop_system_position_limit_list, header,; None;)
+    }
+    async fn get_fop_customer_guarantee(
+        &self,
+        header: ctlh_trade_common::data::Header,
+    ) -> Result<(
+        ResultType,
+        Option<ctlh_aamapp::data::GuaranteeInfoNow>,
+        Option<Vec<ctlh_aamapp::data::SellOpMinCurrentItem>>,
+        Option<ctlh_aamapp::data::GuaranteeInfoNext>,
+        Option<Vec<ctlh_aamapp::data::SellOpMinNextItem>>,
+        Option<Vec<DataError>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_fop_customer_guarantee, check_get_fop_customer_guarantee, header, ; None, None, None, None;)
+    }
+    async fn get_customer_position_limit_list(
+        &self,
+        header: ctlh_trade_common::data::Header,
+    ) -> Result<(
+        ResultType,
+        Option<Vec<ctlh_aamapp::data::PositionLimitItem>>,
+        Option<Vec<ctlh_aamapp::data::PositionLimitItem>>,
+        Option<Vec<DataError>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_customer_position_limit_list, check_get_customer_position_limit_list, header, ; None, None;)
+    }
+    async fn get_fop_customer_attribute(
+        &self,
+        header: ctlh_trade_common::data::Header,
+    ) -> Result<(
+        ResultType,
+        Option<ctlh_aamapp::data::CustomerAttribute>,
+        Option<Vec<DataError>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_fop_customer_attribute, check_get_fop_customer_attribute, header, ; None;)
+    }
+    async fn fop_set_customer_commission(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        set_commission_items: Vec<ctlh_aamapp::data::SetCommissionItem>,
+        update_flg: ctlh_common::data::OffOn,
+    ) -> Result<(ResultType, Option<Vec<DataError>>)> {
+        invoke_api!(Self, self, "aamapp", fop_set_customer_commission, check_fop_set_customer_commission, header, set_commission_items, update_flg; ;)
+    }
+    async fn set_system_position_limit_list(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        position_limit_list: Vec<ctlh_aamapp::data::PositionLimitAdmin>,
+        update_flg: ctlh_common::data::OffOn,
+    ) -> Result<(ResultType, Option<Vec<DataError>>)> {
+        invoke_api!(Self, self, "aamapp", set_system_position_limit_list, check_set_system_position_limit_list, header, position_limit_list, update_flg; ;)
+    }
+    async fn fop_set_customer_guarantee(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        apply_start_date: brpc_std::data::Date,
+        maintenance_guarantee_code: Option<u16>,
+        base_guarantee_code: Option<u16>,
+        required_guarantee_code: Option<u16>,
+        min_guarantee_required: Option<brpc_std::data::Decimal>,
+        sell_op_min_next_list: Vec<ctlh_aamapp::data::SellOpMinNextItem>,
+        update_flg: ctlh_common::data::OffOn,
+    ) -> Result<(ResultType, Option<Vec<DataError>>)> {
+        invoke_api!(Self, self, "aamapp", fop_set_customer_guarantee, check_fop_set_customer_guarantee, header, apply_start_date, maintenance_guarantee_code, base_guarantee_code, required_guarantee_code, min_guarantee_required, sell_op_min_next_list, update_flg; ;)
+    }
+
+    async fn get_fop_mediate_name(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        mediate_code: String,
+    ) -> Result<(ResultType, Option<String>, Option<Vec<DataError>>)> {
+        invoke_api!(Self, self, "aamapp", get_fop_mediate_name, check_get_fop_mediate_name, header, mediate_code; None;)
+    }
+
+    async fn get_fop_customer_internal(
+        &self,
+        header: ctlh_trade_common::data::Header,
+    ) -> Result<(
+        ResultType,
+        Option<ctlh_aamapp::data::CustomerStatusInfo>,
+        Option<Vec<DataError>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_fop_customer_internal, check_get_fop_customer_internal, header, ; None;)
+    }
+
+    async fn get_emergency_guarantee(
+        &self,
+        header: ctlh_trade_common::data::Header,
+    ) -> Result<(
+        ResultType,
+        Option<Vec<ctlh_aamapp::data::EmergencyGuaranteeSettingInfo>>,
+        Option<Vec<DataError>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_emergency_guarantee, check_get_emergency_guarantee, header, ; None;)
+    }
+
+    async fn fop_set_close_out(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        trade_date: brpc_std::data::Date,
+        dept_code: String,
+        close_out_item: Vec<ctlh_aamapp::data::CloseOutItem>,
+    ) -> Result<(ResultType, Option<Vec<DataError>>)> {
+        invoke_api!(Self, self, "aamapp", fop_set_close_out, check_fop_set_close_out, header, trade_date, dept_code, close_out_item; ;)
+    }
+
+    async fn get_fop_deposit_daily_report(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        trade_date: brpc_std::data::Date,
+    ) -> Result<(
+        ResultType,
+        Option<ctlh_aamapp::data::DepositDailyReportInfo>,
+        Option<Vec<DataError>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_fop_deposit_daily_report, check_get_fop_deposit_daily_report, header, trade_date; None;)
+    }
+
+    async fn fop_set_deposit_daily_report(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        deposit_ag: brpc_std::data::Decimal,
+    ) -> Result<(ResultType, Option<Vec<DataError>>)> {
+        invoke_api!(Self, self, "aamapp", fop_set_deposit_daily_report, check_fop_set_deposit_daily_report, header, deposit_ag; ;)
+    }
+
+    async fn get_fop_commission(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        commission_code: Option<u16>,
+        commission_name: Option<String>,
+        product_detail_id: Option<u8>,
+        default_flg: Option<ctlh_common::data::OffOn>,
+        status_flg: Option<ctlh_common::data::OffOn>,
+    ) -> Result<(
+        ResultType,
+        Option<Vec<ctlh_aamapp::data::CommissionListItem>>,
+        Option<Vec<DataError>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_fop_commission, check_get_fop_commission, header, commission_code, commission_name, product_detail_id, default_flg, status_flg; None;)
+    }
+
+    async fn fop_set_commission(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        commission_detail_list: Vec<ctlh_aamapp::data::CommissionDetail>,
+        update_flg: ctlh_common::data::OffOn,
+    ) -> Result<(ResultType, Option<Vec<DataError>>)> {
+        invoke_api!(Self, self, "aamapp", fop_set_commission, check_fop_set_commission, header, commission_detail_list, update_flg; ;)
+    }
+
+    async fn fop_set_customer_position_limit(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        position_limit_items: Vec<ctlh_aamapp::data::PositionLimitSetItem>,
+        apply_start_date: brpc_std::data::Date,
+        update_flg: ctlh_common::data::OffOn,
+    ) -> Result<(ResultType, Option<Vec<DataError>>)> {
+        invoke_api!(Self, self, "aamapp", fop_set_customer_position_limit, check_fop_set_customer_position_limit, header, position_limit_items, apply_start_date, update_flg; ;)
+    }
+
+    async fn fop_set_sales_commission(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        sales_code: String,
+        set_commission_items: Vec<ctlh_aamapp::data::SetCommissionItem>,
+        update_flg: ctlh_common::data::OffOn,
+    ) -> Result<(ResultType, Option<Vec<DataError>>)> {
+        invoke_api!(Self, self, "aamapp", fop_set_sales_commission, check_fop_set_sales_commission, header, sales_code, set_commission_items, update_flg; ;)
+    }
+
+    async fn fop_set_guarantee(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        guarantee_detail: ctlh_aamapp::data::GuaranteeDetail,
+        update_flg: ctlh_common::data::OffOn,
+    ) -> Result<(
+        ctlh_common::data::ResultType,
+        Option<Vec<ctlh_trade_common::data::Error>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", fop_set_guarantee, check_fop_set_guarantee, header, guarantee_detail, update_flg; ; )
+    }
+
+    async fn get_position_summary(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        detail_total_cls: ctlh_aamapp::data::DetailTotalCls,
+        product_cls: Option<ctlh_common::data::ProductCls>,
+        product_detail_id_list: Option<Vec<u8>>,
+        security_code: Option<String>,
+        total_settlement_flg: ctlh_common::data::OffOn,
+        all_search_flg: ctlh_common::data::OffOn,
+    ) -> Result<(
+        ResultType,
+        Option<Vec<ctlh_aamapp::data::PositionSummaryDataItem>>,
+        Option<Vec<DataError>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_position_summary, check_get_position_summary, header, detail_total_cls, product_cls, product_detail_id_list, security_code, total_settlement_flg, all_search_flg; None;)
+    }
+
+    async fn get_fop_transfer_money(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        request_date: brpc_std::data::Date,
+    ) -> Result<(
+        ResultType,
+        Option<ctlh_aamapp::data::DeliveryAmountMovement>,
+        Option<Vec<DataError>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_fop_transfer_money, check_get_fop_transfer_money, header, request_date; None;)
+    }
+
+    async fn fop_set_trade_authority_change(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        customer_info: Vec<ctlh_aamapp::data::TradeRestriction>,
+        update_cls: ctlh_common::data::UpdateCls,
+    ) -> Result<(
+        ResultType,
+        Option<Vec<ctlh_aamapp::data::TradeRestriction>>,
+        Option<Vec<DataError>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", fop_set_trade_authority_change, check_fop_set_trade_authority_change, header, customer_info, update_cls; None;)
+    }
+
+    async fn get_sq_settlement_list(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        delivery_cls: ctlh_aamapp::data::DeliveryType,
+        delivery_month: u32,
+        delivery_week: Option<u8>,
+        right_cls: Vec<ctlh_common::data::RightCls>,
+    ) -> Result<(
+        ResultType,
+        Option<Vec<ctlh_aamapp::data::SqRightDetailItem>>,
+        Option<Vec<DataError>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_sq_settlement_list, check_get_sq_settlement_list, header, delivery_cls, delivery_month, delivery_week, right_cls; None;)
+    }
+
+    async fn get_position_list_internal(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        product_cls: Option<ctlh_common::data::ProductCls>,
+        product_detail_id_list: Option<Vec<u8>>,
+        security_code: Option<String>,
+        today_settlement_flg: ctlh_common::data::OffOn,
+        all_search_flg: ctlh_common::data::OffOn,
+    ) -> Result<(
+        ResultType,
+        Option<Vec<ctlh_aamapp::data::PositionReferInfo>>,
+        Option<Decimal>,
+        Option<Decimal>,
+        Option<Vec<DataError>>,
+    )> {
+        let start = std::time::Instant::now();
+        let ip = header.remote_ip.clone();
+        let id = random_str();
+
+        let (res, addr) = request!(Self, self, "aamapp", get_position_list_internal, check_get_position_list_internal, header, ip, id, product_cls, product_detail_id_list, security_code, today_settlement_flg, all_search_flg; None, None, None;);
+        let res1 = match res {
+            Ok(ref v) => {
+                let mut v1 = v.clone();
+                v1.1 = v1.1.map(|mut v| {
+                    v.iter_mut().for_each(|x| {
+                        x.customer_name = "***".into();
+                    });
+                    v
+                });
+                Ok(v1)
+            }
+            Err(ref e) => Err(e),
+        };
+        response!(
+            "aamapp",
+            get_position_list_internal,
+            ip,
+            res1,
+            start,
+            id,
+            addr
+        );
+        res
+    }
+
+    async fn get_fop_account_list(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        branch_code: Option<String>,
+        account_code: Option<String>,
+        customer_name: Option<String>,
+        prop_agency: Option<ctlh_common::data::PropAgency>,
+        in_branch_code: Option<String>,
+        mediate_code: Option<String>,
+    ) -> Result<(
+        ResultType,
+        Option<Vec<ctlh_aamapp::data::AccountListItem>>,
+        Option<Vec<DataError>>,
+    )> {
+        let start = std::time::Instant::now();
+        let ip = header.remote_ip.clone();
+        let id = random_str();
+
+        let (res, addr) = request!(Self, self, "aamapp", get_fop_account_list, check_get_fop_account_list, header, ip, id, branch_code, account_code, customer_name, prop_agency, in_branch_code, mediate_code; None;);
+        let res1 = match res {
+            Ok(ref v) => {
+                let mut v1 = v.clone();
+                v1.1 = v1.1.map(|mut v| {
+                    v.iter_mut().for_each(|x| {
+                        x.customer_name = "***".into();
+                    });
+                    v
+                });
+                Ok(v1)
+            }
+            Err(ref e) => Err(e),
+        };
+        response!("aamapp", get_fop_account_list, ip, res1, start, id, addr);
+        res
+    }
+
+    async fn fop_set_emergency_guarantee(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        emergency_guarantee_list: Vec<EmergencyGuaranteeInfoSet>,
+    ) -> Result<(ResultType, Option<Vec<DataError>>)> {
+        invoke_api!(Self, self, "aamapp", fop_set_emergency_guarantee, check_fop_set_emergency_guarantee, header, emergency_guarantee_list; ;)
+    }
+
+    async fn get_fop_guarantee(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        guarantee_code: Option<u16>,
+        guarantee_name: Option<String>,
+        guarantee_cls: Option<GuaranteeCls>,
+        status_flg: Option<OffOn>,
+        default_flg: Option<OffOn>,
+    ) -> Result<(
+        ResultType,
+        Option<Vec<GuaranteeItem>>,
+        Option<Vec<DataError>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_fop_guarantee, check_get_fop_guarantee, header, guarantee_code, guarantee_name, guarantee_cls, status_flg, default_flg; None;)
+    }
+
+    async fn get_fop_sales_commission(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        sales_code: String,
+    ) -> Result<(
+        ResultType,
+        Option<Vec<CommissionInfo>>,
+        Option<Vec<CommissionInfo>>,
+        Option<Vec<DataError>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_fop_sales_commission, check_get_fop_sales_commission, header, sales_code; None, None;)
+    }
+
+    async fn get_loss_cut_info(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        is_today_flg: ctlh_common::data::OffOn,
+        start_date: brpc_std::data::Date,
+        end_date: brpc_std::data::Date,
+        all_search_flg: ctlh_common::data::OffOn,
+    ) -> Result<(
+        ResultType,
+        Option<Vec<ctlh_aamapp::data::LossCutInfoItem>>,
+        Option<Vec<DataError>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_loss_cut_info, check_get_loss_cut_info, header, is_today_flg, start_date, end_date, all_search_flg; None;)
+    }
+
+    async fn get_closing_account_info_internal(
+        &self,
+        header: ctlh_trade_common::data::Header,
+    ) -> Result<(
+        ctlh_common::data::ResultType,
+        Option<ctlh_trade_common::data::AccountReferInfo>,
+        Option<brpc_std::data::Decimal>,
+        Option<Vec<ctlh_trade_common::data::Error>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_closing_account_info_internal, check_get_closing_account_info_internal, header, ; None, None;)
+    }
+
+    async fn get_loss_cut_detail(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        loss_cut_no: u64,
+    ) -> Result<(
+        ctlh_common::data::ResultType,
+        Option<Vec<ctlh_aamapp::data::JudgeLossCutDetail>>,
+        Option<Vec<ctlh_aamapp::data::JudgeLossCutPos>>,
+        Option<Vec<ctlh_aamapp::data::JudgeLossCutSettle>>,
+        Option<Vec<ctlh_trade_common::data::Error>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_loss_cut_detail, check_get_loss_cut_detail, header, loss_cut_no; None, None, None;)
+    }
+
+    async fn get_account_info_internal(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        refer_time_cls: ctlh_common::data::ReferTimeCls,
+    ) -> Result<(
+        ctlh_common::data::ResultType,
+        Option<brpc_std::data::Decimal>,
+        Option<Vec<ctlh_aamapp::data::SellOpMinChargeInfo>>,
+        Option<Vec<ctlh_trade_common::data::Error>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_account_info_internal, check_get_account_info_internal, header, refer_time_cls; None, None;)
+    }
+
+    async fn get_execution_list_internal(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        today_cls: ctlh_common::data::TodayCls,
+        search_condition: ctlh_aamapp::data::SearchConditionExecutionInternal,
+        all_search_flg: ctlh_common::data::OffOn,
+    ) -> Result<(
+        ctlh_common::data::ResultType,
+        Option<Vec<ctlh_aamapp::data::ExecutionInfoAdmin>>,
+        Option<Vec<ctlh_trade_common::data::Error>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_execution_list_internal, check_get_execution_list_internal, header, today_cls, search_condition, all_search_flg; None;)
+    }
+
+    async fn get_execution_list_csv(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        today_cls: ctlh_common::data::TodayCls,
+        search_condition: ctlh_aamapp::data::SearchConditionExecutionInternal,
+        all_search_flg: ctlh_common::data::OffOn,
+    ) -> Result<(
+        ctlh_common::data::ResultType,
+        Option<Vec<ctlh_aamapp::data::ExecutionInfoAdmin>>,
+        Option<Vec<ctlh_trade_common::data::Error>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_execution_list_csv, check_get_execution_list_csv, header, today_cls, search_condition, all_search_flg; None;)
+    }
+
+    async fn get_settle_order_position_list_internal(
+        &self,
+        header: ctlh_trade_common::data::Header,
+        order_no: u64,
+    ) -> Result<(
+        ctlh_common::data::ResultType,
+        Option<Vec<ctlh_aamapp::data::SettlePositionInfoAdmin>>,
+        Option<Vec<ctlh_trade_common::data::Error>>,
+    )> {
+        invoke_api!(Self, self, "aamapp", get_settle_order_position_list_internal, check_get_settle_order_position_list_internal, header, order_no; None;)
+    }
+}
