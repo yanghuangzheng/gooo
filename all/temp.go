@@ -448,3 +448,4 @@ substrate
 ink!
 rocksdb
 https://gitlab.jp.sbibits.com/cthulhu/oms/omsapp-web	
+https://github.com/SuanCaiYv/rust_learn/blob/master/doc/1.md
