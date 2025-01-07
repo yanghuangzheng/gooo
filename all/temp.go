@@ -465,3 +465,4 @@ https://daimajia.com/2017/08/24/how-to-start-blockchain-learning/
 5. **Proxy-warp**: 这是一个基于warp框架的HTTP代理实现。Warp是一个用于构建Web服务的快速、类型安全的Rust库。Proxy-warp可以作为一个例子，展示如何使用Rust构建HTTP代理服务。
 
 这些项目都展示了Rust在处理高并发和低延迟方面的强大能力。选择哪一个取决于你的具体需求，包括你是否需要一个完整的HTTP代理解决方案还是更倾向于构建自己的定制化代理。
+https://nomicon.purewhite.io/meet-safe-and-unsafe.html
