@@ -450,3 +450,4 @@ rocksdb
 https://gitlab.jp.sbibits.com/cthulhu/oms/omsapp-web	
 https://github.com/SuanCaiYv/rust_learn/blob/master/doc/1.md
 https://gitlab.jp.sbibits.com/common/brpc
+https://diesel.rs/guides/getting-started
