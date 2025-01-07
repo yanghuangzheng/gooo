@@ -452,3 +452,16 @@ https://github.com/SuanCaiYv/rust_learn/blob/master/doc/1.md
 https://gitlab.jp.sbibits.com/common/brpc
 https://diesel.rs/guides/getting-started
 https://daimajia.com/2017/08/24/how-to-start-blockchain-learning/
+在Rust生态系统中，有几个开源项目因其高并发和低延迟的特性而受到关注，特别适合用于构建TCP/HTTP代理服务。以下是一些推荐的Rust开源项目：
+
+1. **Tide**: 虽然Tide是一个Web应用框架，但它也适合用于构建高性能的HTTP服务。它利用了Tokio异步运行时，可以实现高并发和低延迟。
+
+2. **Hyper**: Hyper是一个快速、可靠的HTTP客户端和服务器库，它同样基于Tokio异步运行时。Hyper以其高效能著称，非常适合构建高性能的HTTP代理。
+
+3. **Tokio**: Tokio是一个异步运行时，为编写可靠且高效的网络应用程序提供了基础。虽然Tokio本身不是一个完整的HTTP代理，但它可以作为构建这类应用的基础。
+
+4. **Mio**: Mio是一个低级别的I/O库，它提供了事件驱动的异步I/O，使得开发者能够构建高性能的网络应用。Mio可以作为构建TCP/HTTP代理的基础组件。
+
+5. **Proxy-warp**: 这是一个基于warp框架的HTTP代理实现。Warp是一个用于构建Web服务的快速、类型安全的Rust库。Proxy-warp可以作为一个例子，展示如何使用Rust构建HTTP代理服务。
+
+这些项目都展示了Rust在处理高并发和低延迟方面的强大能力。选择哪一个取决于你的具体需求，包括你是否需要一个完整的HTTP代理解决方案还是更倾向于构建自己的定制化代理。
