@@ -466,3 +466,94 @@ https://daimajia.com/2017/08/24/how-to-start-blockchain-learning/
 
 这些项目都展示了Rust在处理高并发和低延迟方面的强大能力。选择哪一个取决于你的具体需求，包括你是否需要一个完整的HTTP代理解决方案还是更倾向于构建自己的定制化代理。
 https://nomicon.purewhite.io/meet-safe-and-unsafe.html
+package initialize
+
+import (
+	"fmt"
+	"sync"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
+	"go.uber.org/zap"
+	"goods-api/goods-web/global"
+	"goods-api/goods-web/proto"
+)
+
+// 定义连接池结构体
+type GRPCPool struct {
+	pool     chan *grpc.ClientConn
+	mu       sync.Mutex
+	maxConns int
+}
+
+// 初始化连接池
+func NewGRPCPool(maxConns int) *GRPCPool {
+	return &GRPCPool{
+		pool:     make(chan *grpc.ClientConn, maxConns),
+		maxConns: maxConns,
+	}
+}
+
+// 获取连接
+func (p *GRPCPool) Get() (*grpc.ClientConn, error) {
+	select {
+	case conn := <-p.pool:
+		return conn, nil
+	default:
+	}
+	conn, err := grpc.DialContext(
+		context.Background(),
+		fmt.Sprintf("consul://%s:%d/%s?wait=14s", global.ServerConfig.ConsulInfo.Host, global.ServerConfig.ConsulInfo.Port, global.ServerConfig.Name),
+		grpc.WithInsecure(),
+		grpc.WithDefaultServiceConfig(`{"loadBalancingPolicy": "round_robin"}`),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                10 * time.Second,
+			Timeout:             20 * time.Second,
+			PermitWithoutStream: true,
+		}),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return conn, nil
+}
+
+// 放回连接
+func (p *GRPCPool) Put(conn *grpc.ClientConn) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.pool) < p.maxConns {
+		p.pool <- conn
+	} else {
+		conn.Close()
+	}
+}
+
+// 初始化连接池
+func InitGRPCPool(pool *GRPCPool) {
+	for i := 0; i < pool.maxConns; i++ {
+		conn, err := pool.Get()
+		if err != nil {
+			zap.S().Fatal("[InitGRPCPool] 连接gRPC服务失败: ", err)
+		}
+		go func() {
+			defer pool.Put(conn)
+			select {}
+		}()
+	}
+}
+
+// 获取gRPC客户端
+func GetGoodsSrvClient(pool *GRPCPool) proto.GoodsClient {
+	conn, _ := pool.Get()
+	return proto.NewGoodsClient(conn)
+}
+
+// 关闭gRPC连接
+func CloseGRPCConnection(pool *GRPCPool) {
+	for i := 0; i < pool.maxConns; i++ {
+		conn, _ := pool.Get()
+		pool.Put(conn)
+	}
+}
