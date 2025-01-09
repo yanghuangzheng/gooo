@@ -466,6 +466,7 @@ https://daimajia.com/2017/08/24/how-to-start-blockchain-learning/
 
 这些项目都展示了Rust在处理高并发和低延迟方面的强大能力。选择哪一个取决于你的具体需求，包括你是否需要一个完整的HTTP代理解决方案还是更倾向于构建自己的定制化代理。
 https://nomicon.purewhite.io/meet-safe-and-unsafe.html
+////利用数据池的优化consul与grpc的连接
 package initialize
 
 import (
