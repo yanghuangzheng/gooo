@@ -558,4 +558,83 @@ func CloseGRPCConnection(pool *GRPCPool) {
 		pool.Put(conn)
 	}
 }
+	//rust语言中文社区
 	https://rustcc.cn/article?id=54364bbb-e319-4f31-9f42-1d6865ef0dfa
+	use reqwest::Client;
+	//consul长轮询实现
+use serde_json::Value;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio;
+use tokio::sync::RwLock;
+
+// 假设这是你的连接对象类型（比如 gRPC 客户端）
+struct ServiceConnection {
+    // 连接的具体实现（比如 gRPC 客户端实例）
+}
+
+// 异步函数来获取服务实例并返回连接对象
+async fn fetch_service_instance(client: &Client, service_name: &str) -> Result<ServiceConnection, Box<dyn std::error::Error>> {
+    // 这里应该实现通过 Consul API 获取服务实例，并创建连接对象的逻辑
+    // ...
+    // 为了简化，我们直接返回一个模拟的连接对象
+    Ok(ServiceConnection {})
+}
+
+// 异步函数来初始化连接，并使用长轮询来更新连接
+async fn init_and_update_connection(consul_url: &str, service_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let reqwest_client = Client::new();
+    let connection = Arc::new(RwLock::new(None));
+
+    // 初始化连接（这里可能是从缓存中获取，或者通过其他方式）
+    let initial_connection = fetch_service_instance(&reqwest_client, service_name).await?;
+    {
+        let mut conn_write = connection.write().await;
+        *conn_write = Some(initial_connection);
+    }
+
+    // 长轮询循环来更新连接
+    loop {
+        let connection_clone = connection.clone();
+        let response = reqwest_client
+            .get(&format!("{}/v1/health/service/{}?wait=20s", consul_url, service_name))
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            let services: Vec<Value> = response.json().await?;
+            if !services.is_empty() {
+                // 假设我们只关心第一个服务实例（实际情况可能需要根据业务逻辑来处理）
+                let service = &services[0];
+                // 这里应该实现根据服务信息创建新连接对象的逻辑
+                // ...
+                // 为了简化，我们直接创建一个新的模拟连接对象
+                let new_connection = fetch_service_instance(&reqwest_client, service_name).await?;
+
+                // 更新全局连接对象
+                {
+                    let mut conn_write = connection_clone.write().await;
+                    *conn_write = Some(new_connection);
+                }
+
+                println!("Updated connection to new service instance.");
+            }
+        } else {
+            // 处理非成功响应（比如 Consul 服务器不可达）
+            eprintln!("Failed to fetch service instances from Consul: {}", response.status());
+            // 在这里可以实现重试逻辑，比如等待一段时间后再次尝试
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    }
+}
+
+// 主函数或其他地方调用 init_and_update_connection
+#[tokio::main]
+async fn main() {
+    let consul_url = "http://localhost:8500";
+    let service_name = "rust-shop-serve";
+    if let Err(e) = init_and_update_connection(consul_url, service_name).await {
+        eprintln!("Error in init_and_update_connection: {}", e);
+    }
+}
+
