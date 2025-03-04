@@ -637,4 +637,289 @@ async fn main() {
         eprintln!("Error in init_and_update_connection: {}", e);
     }
 }
+/////////////////////////////////////////////////////
+	use redis::{Client, aio::MultiplexedConnection};
+use std::collections::VecDeque;
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
+use tokio::sync::Mutex;
+use tokio::sync::MutexGuard;
+use tokio::sync::Notify;
+use tokio::time;
+/// Redis多路复用连接包装
+const MAX_RETRIES: u32 = 3;
+const RETRY_DELAY: Duration = Duration::from_millis(500);
+const TIMEOUT: Duration = Duration::from_secs(3);
 
+struct RedisConnection {
+    conn: MultiplexedConnection, // 多路复用连接
+                                 //last_active: Instant,       // 最后活跃时间
+}
+/// 分片容器升级为连接集
+struct Hmutex<T> {
+    shards: Vec<Mutex<VecDeque<T>>>, // 分片哈希集合
+    slice: u32,                      //有多少分片
+    index: AtomicU64,                //要检查的队列索引地址
+}
+pub struct ConnectionPool {
+    queue: Arc<Hmutex<RedisConnection>>, // 固定cpu分片
+    ccondget: Arc<Notify>,               //信号锁
+    selector: AtomicU64,                 // 池子里还有多少连接数
+    _default_connection: u32,            //默认 连接池数量大小
+    backup_connections: Arc<Mutex<VecDeque<RedisConnection>>>, //备用连接池
+}
+//////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////
+impl ConnectionPool {
+    /// 创建带预热功能的连接池
+    pub async fn new(
+        &mut self,
+        default: u32,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        if default == 0 {
+            return Err("redis连接池 最大值不能小于等于0".to_string().into());
+        }
+        let slice = (num_cpus::get() * 2).next_power_of_two(); // CPU核心数相关 
+        let mut shards = Vec::with_capacity(slice); //初始化分片
+        // 初始化分片容器
+        for _ in 0..slice {
+            shards.push(Mutex::new(VecDeque::new())); //分片里加入队列
+        }
+        let hm = Hmutex {
+            //初始化
+            shards,
+            slice: slice as u32,
+            index: AtomicU64::new(0),
+        };
+        self.selector = AtomicU64::new(0);
+        // 连接预热（异步批量创建）
+        let client = Client::open("redis://127.0.0.1:6379")?;
+        for _ in 0..default {
+            let conn = RedisConnection {
+                conn: client.get_multiplexed_async_connection().await?,
+            };
+            let current = self.selector.load(Ordering::Acquire);
+            self.selector.fetch_add(1, Ordering::Release);
+            if current != 0 {
+                let shard_idx = (current % (self.queue.slice as u64)) as usize;
+                hm.shards[shard_idx].lock().await.push_back(conn);
+            } else {
+                hm.shards[current as usize].lock().await.push_back(conn);
+            }
+        }
+        let backup_connection = Arc::new(Mutex::new(VecDeque::new()));
+        self.precreate_backup_connections(backup_connection.clone(), default as usize)
+            .await?;
+        Ok(Self {
+            queue: Arc::new(hm),
+            ccondget: Arc::new(Notify::new()),
+            selector: AtomicU64::new(default.into()),
+            _default_connection: default,
+            backup_connections: backup_connection,
+        })
+    }
+    //////////////////////////////////预备连接初始化
+    async fn precreate_backup_connections(
+        &self,
+        backup: Arc<Mutex<VecDeque<RedisConnection>>>,
+        count: usize,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let client = match Client::open("redis://127.0.0.1:6379") {
+            Ok(c) => c,
+            Err(e) => return Err(Box::new(e)),
+        };
+        for _ in 0..count {
+            match client.get_multiplexed_async_connection().await {
+                Ok(conn) => {
+                    let mut guard = backup.lock().await;
+                    guard.push_back(RedisConnection { conn });
+                }
+                Err(e) => eprintln!("Failed to precreate backup connection: {}", e),
+            }
+        }
+        Ok(())
+    }
+    //////////////////////////////////获得连接
+    pub async fn get(
+        &self,
+    ) -> Result<MultiplexedConnection, Box<dyn std::error::Error + Send + Sync>> {
+        loop {
+            let combined = self.selector.load(Ordering::Acquire);
+            let current = combined as u16; // 低16位解码   连接数
+            let old_version = (combined >> 16) & 0xFFFF_FFFF_FFFF; // 高48位解码  版本号
+            if current > 0 {
+                let new_current = current - 1;
+                let new_version = old_version.wrapping_add(1);
+                let new_combined = (new_version << 16) | new_current as u64;
+                // CAS原子操作
+                match self.selector.compare_exchange_weak(
+                    combined,
+                    new_combined,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => {
+                        //计算分片索引
+                        let shard_idx = new_current % self.queue.slice as u16;
+                        //检查分片连接
+                        if let Some(conn) = self.queue.shards[shard_idx as usize]
+                            .lock()
+                            .await
+                            .pop_back()
+                        {
+                            return Ok(conn.conn); 
+                        } else {
+                            //回滚计数器
+                            self.rollback_counter(old_version, current); //总数据减了一 但是我们并没有获得连接 所以要将数据加回去
+                        }
+                    }
+                    Err(_) => continue, // CAS失败，重试
+                }
+            }
+            //无可用连接时等待通知
+            self.ccondget.notified().await;
+        }
+    } //
+    fn rollback_counter(&self, version: u64, current: u16) {
+        let mut combined = self.selector.load(Ordering::Acquire);
+        loop {
+            let current_it = combined as u16; // 低16位解码 
+            let version_it = (combined >> 16) & 0xFFFF_FFFF_FFFF; // 高48位解码  
+            if version_it != version || current_it != current - 1 {
+                break; // 状态已变化，无需回滚 
+            }
+            let new_ver = version_it.wrapping_add(1); // 强制版本递增 
+            let new_cnt = current;
+            let new_val = (new_ver << 16) | new_cnt as u64; // 重新组合值 
+            // 使用CAS确保原子更新
+            match self.selector.compare_exchange_weak(
+                combined,
+                new_val,
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(v) => combined = v, // 其他线程已修改，重试
+            }
+        }
+    }
+    ////////////////////////////////归还连接
+    pub async fn back(
+        &self,
+        redconn: MultiplexedConnection,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let connection = RedisConnection { conn: redconn };
+        // 原子递增版本号与计数器
+        let mut combined = self.selector.load(Ordering::Acquire);
+        loop {
+            let current = combined as u16; // 低16位解码 
+            let old_version = (combined >> 16) & 0xFFFF_FFFF_FFFF; // 高48位解码  
+            let new_ver = old_version.wrapping_add(1); // 强制版本递增 
+            let new_cnt = current + 1; // 连接数+1 
+            let new_val = (new_ver << 16) | new_cnt as u64; // 重新组合值 
+            // 使用CAS确保原子更新
+            match self.selector.compare_exchange_weak(
+                combined,
+                new_val,
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(v) => combined = v, // 其他线程已修改，重试
+            }
+        }
+        let index = combined % (self.queue.slice as u64);
+        let mut guard = self.queue.shards[index as usize].lock().await;
+        guard.push_back(connection);
+        self.ccondget.notify_one();
+        Ok(())
+    }
+    /////////////////////////////健康检查
+    pub async fn healthcheck(&self) {
+        loop {
+            let current_idx = self.queue.index.fetch_add(1, Ordering::Release);
+            if current_idx == (self.queue.slice as u64) {
+                self.queue.index.store(0, Ordering::Release);
+                break;
+            }
+            let mut guard = self.queue.shards[current_idx as usize].lock().await;
+            let mut number = guard.len();
+            while number != 0 {
+                if let Some(mut conn) = guard.pop_back() {
+                    if self.check_connection(&mut conn).await {
+                        // 连接有效性检测逻辑
+                        guard.push_back(conn); // 有效连接放回队列尾部 
+                    } else {
+                        let _ = self.precreate_connection(&mut guard).await; // 失效连接替换 
+                    }
+                }
+                number -= 1;
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    }
+    ///////////////////////////////////////////替换
+    async fn precreate_connection(
+        &self,
+        guard: &mut MutexGuard<'_, VecDeque<RedisConnection>>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        for retry in 0..MAX_RETRIES {
+            let mut guard_prep = self.backup_connections.lock().await;
+            if guard_prep.len() > 0 {
+                if let Some(conn) = guard_prep.pop_back() {
+                    guard.push_back(RedisConnection { conn: conn.conn });
+                    return Ok(());
+                } else {
+                    self.replace_connection(guard, retry).await?;
+                }
+            } else {
+                self.replace_connection(guard, retry).await?;
+            }
+        }
+        Ok(())
+    }
+    async fn replace_connection(
+        &self,
+        guard: &mut MutexGuard<'_, VecDeque<RedisConnection>>,
+        retry: u32,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let conn_result = time::timeout(TIMEOUT, async {
+            let client = Client::open("redis://127.0.0.1:6379/")
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
+
+            client
+                .get_multiplexed_async_connection()
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })
+        })
+        .await;
+
+        match conn_result {
+            Ok(Ok(conn)) => {
+                guard.push_back(RedisConnection { conn });
+                return Ok(());
+            }
+            _ => {
+                println!("连接错误 [重试 {}]", retry);
+            }
+        }
+        if retry < MAX_RETRIES - 1 {
+            tokio::time::sleep(RETRY_DELAY).await;
+        }
+        println!("连接替换失败，已达最大重试次数");
+        Ok(())
+    }
+
+    /////////////////////////////////////////连接检查
+    async fn check_connection(&self, conn: &mut RedisConnection) -> bool {
+        // 使用redis-rs提供的命令构造方式
+        let cmd_valid = conn.conn.send_packed_command(&redis::cmd("PING")).await;
+        if cmd_valid.is_ok() {
+            println!("Connection alive:");
+            return true;
+        }
+        false
+    }
+}
